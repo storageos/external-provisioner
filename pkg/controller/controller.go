@@ -480,9 +480,23 @@ func (p *csiProvisioner) Provision(options controller.VolumeOptions) (*v1.Persis
 		return nil, err
 	}
 
+	// Copy StorageClass parameters.
+	paramsWithPVCLabels := make(map[string]string)
+	for k, v := range options.Parameters {
+		paramsWithPVCLabels[k] = v
+	}
+	// Inherit PVC namespace if not defined in StorageClass parameters.
+	if _, exists := paramsWithPVCLabels["volumenamespace"]; !exists {
+		paramsWithPVCLabels["volumenamespace"] = options.PVC.Namespace
+	}
+	// Override any StorageClass params with PVC labels.
+	for k, v := range options.PVC.GetObjectMeta().GetLabels() {
+		paramsWithPVCLabels[k] = v
+	}
+
 	fsTypesFound := 0
 	fsType := ""
-	for k, v := range options.Parameters {
+	for k, v := range paramsWithPVCLabels {
 		if strings.ToLower(k) == "fstype" {
 			fsType = v
 			fsTypesFound += 1
@@ -511,7 +525,7 @@ func (p *csiProvisioner) Provision(options controller.VolumeOptions) (*v1.Persis
 	// Create a CSI CreateVolumeRequest and Response
 	req := csi.CreateVolumeRequest{
 		Name:               pvName,
-		Parameters:         options.Parameters,
+		Parameters:         paramsWithPVCLabels,
 		VolumeCapabilities: volumeCaps,
 		CapacityRange: &csi.CapacityRange{
 			RequiredBytes: int64(volSizeBytes),
@@ -571,7 +585,7 @@ func (p *csiProvisioner) Provision(options controller.VolumeOptions) (*v1.Persis
 		return nil, err
 	}
 
-	req.Parameters, err = removePrefixedParameters(options.Parameters)
+	req.Parameters, err = removePrefixedParameters(paramsWithPVCLabels)
 	if err != nil {
 		return nil, fmt.Errorf("failed to strip CSI Parameters of prefixed keys: %v", err)
 	}
