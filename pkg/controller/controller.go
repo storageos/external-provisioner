@@ -508,6 +508,11 @@ func (p *csiProvisioner) ProvisionExt(options controller.ProvisionOptions) (*v1.
 		volumeCaps = append(volumeCaps, getVolumeCapability(options, pvcAccessMode, fsType))
 	}
 
+	// StorageOS only: Overlay StorageClass params with PVC labels.
+	for k, v := range options.PVC.GetObjectMeta().GetLabels() {
+		options.StorageClass.Parameters[k] = v
+	}
+
 	// Create a CSI CreateVolumeRequest and Response
 	req := csi.CreateVolumeRequest{
 		Name:               pvName,
