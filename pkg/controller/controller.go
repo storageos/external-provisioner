@@ -118,6 +118,9 @@ const (
 	deleteVolumeRetryCount = 5
 
 	annStorageProvisioner = "volume.beta.kubernetes.io/storage-provisioner"
+
+	// Volume namespace (StorageOS only).
+	volumeNamespaceKey = "volumenamespace"
 )
 
 var (
@@ -432,9 +435,23 @@ func (p *csiProvisioner) ProvisionExt(options controller.ProvisionOptions) (*v1.
 		return nil, controller.ProvisioningFinished, err
 	}
 
+	// Copy StorageClass parameters.
+	paramsWithPVCLabels := make(map[string]string)
+	for k, v := range options.StorageClass.Parameters {
+		paramsWithPVCLabels[k] = v
+	}
+	// Inherit PVC namespace if not defined in StorageClass parameters.
+	if _, exists := paramsWithPVCLabels[volumeNamespaceKey]; !exists {
+		paramsWithPVCLabels[volumeNamespaceKey] = options.PVC.Namespace
+	}
+	// Override any StorageClass params with PVC labels.
+	for k, v := range options.PVC.Labels {
+		paramsWithPVCLabels[k] = v
+	}
+
 	fsTypesFound := 0
 	fsType := ""
-	for k, v := range options.StorageClass.Parameters {
+	for k, v := range paramsWithPVCLabels {
 		if strings.ToLower(k) == "fstype" || k == prefixedFsTypeKey {
 			fsType = v
 			fsTypesFound++
@@ -462,7 +479,7 @@ func (p *csiProvisioner) ProvisionExt(options controller.ProvisionOptions) (*v1.
 	// Create a CSI CreateVolumeRequest and Response
 	req := csi.CreateVolumeRequest{
 		Name:               pvName,
-		Parameters:         options.StorageClass.Parameters,
+		Parameters:         paramsWithPVCLabels,
 		VolumeCapabilities: volumeCaps,
 		CapacityRange: &csi.CapacityRange{
 			RequiredBytes: int64(volSizeBytes),
@@ -529,7 +546,7 @@ func (p *csiProvisioner) ProvisionExt(options controller.ProvisionOptions) (*v1.
 		return nil, controller.ProvisioningNoChange, err
 	}
 
-	req.Parameters, err = removePrefixedParameters(options.StorageClass.Parameters)
+	req.Parameters, err = removePrefixedParameters(paramsWithPVCLabels)
 	if err != nil {
 		return nil, controller.ProvisioningFinished, fmt.Errorf("failed to strip CSI Parameters of prefixed keys: %v", err)
 	}
