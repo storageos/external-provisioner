@@ -80,6 +80,9 @@ const (
 
 	snapshotKind     = "VolumeSnapshot"
 	snapshotAPIGroup = snapapi.GroupName // "snapshot.storage.k8s.io"
+
+	// Volume namespace (StorageOS only).
+	volumeNamespaceKey = "volumenamespace"
 )
 
 // CSIProvisioner struct
@@ -397,11 +400,25 @@ func (p *csiProvisioner) Provision(options controller.VolumeOptions) (*v1.Persis
 		}
 	}
 
+	// Copy StorageClass parameters.
+	paramsWithPVCLabels := make(map[string]string)
+	for k, v := range options.Parameters {
+		paramsWithPVCLabels[k] = v
+	}
+	// Inherit PVC namespace if not defined in StorageClass parameters.
+	if _, exists := paramsWithPVCLabels["volumenamespace"]; !exists {
+		paramsWithPVCLabels["volumenamespace"] = options.PVC.Namespace
+	}
+	// Override any StorageClass params with PVC labels.
+	for k, v := range options.PVC.GetObjectMeta().GetLabels() {
+		paramsWithPVCLabels[k] = v
+	}
+
 	// Create a CSI CreateVolumeRequest and Response
 	req := csi.CreateVolumeRequest{
 
 		Name:               pvName,
-		Parameters:         options.Parameters,
+		Parameters:         paramsWithPVCLabels,
 		VolumeCapabilities: volumeCaps,
 		CapacityRange: &csi.CapacityRange{
 			RequiredBytes: int64(volSizeBytes),
@@ -509,7 +526,7 @@ func (p *csiProvisioner) Provision(options controller.VolumeOptions) (*v1.Persis
 	}
 
 	fsType := ""
-	for k, v := range options.Parameters {
+	for k, v := range paramsWithPVCLabels {
 		switch strings.ToLower(k) {
 		case "fstype":
 			fsType = v
