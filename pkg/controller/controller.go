@@ -592,6 +592,11 @@ func (p *csiProvisioner) ProvisionExt(options controller.ProvisionOptions) (*v1.
 		req.Parameters[pvNameKey] = pvName
 	}
 
+	// StorageOS only: Add PVC labels to create volume request
+	for k, v := range options.PVC.GetObjectMeta().GetLabels() {
+		req.Parameters[k] = v
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
 	defer cancel()
 	rep, err = p.csiClient.CreateVolume(ctx, &req)
