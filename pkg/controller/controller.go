@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/exp/rand"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -41,6 +42,7 @@ import (
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	_ "k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -133,6 +135,8 @@ const (
 	annStorageProvisioner = "volume.beta.kubernetes.io/storage-provisioner"
 
 	snapshotNotBound = "snapshot %s not bound"
+
+	storageosHintMaster = "storageos.com/hint.master"
 )
 
 var (
@@ -542,8 +546,6 @@ func (p *csiProvisioner) ProvisionExt(options controller.ProvisionOptions) (*v1.
 		req.AccessibilityRequirements = requirements
 	}
 
-	klog.V(5).Infof("CreateVolumeRequest %+v", req)
-
 	rep := &csi.CreateVolumeResponse{}
 
 	// Resolve provision secret credentials.
@@ -596,6 +598,17 @@ func (p *csiProvisioner) ProvisionExt(options controller.ProvisionOptions) (*v1.
 	for k, v := range options.PVC.GetObjectMeta().GetLabels() {
 		req.Parameters[k] = v
 	}
+
+	// Add a StorageOS volume master hint.
+	hint, err := generateVolumePlacementHint(p.client, p.driverName, p.csiNodeLister)
+	if err != nil {
+		// Log an error and continue without setting a hint.
+		klog.V(5).Infof("failed to get a volume placement hint: %v", err)
+	} else {
+		req.Parameters[storageosHintMaster] = hint
+	}
+
+	klog.V(5).Infof("CreateVolumeRequest %+v", req)
 
 	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
 	defer cancel()
@@ -1235,4 +1248,40 @@ func cleanupVolume(p *csiProvisioner, delReq *csi.DeleteVolumeRequest, provision
 		}
 	}
 	return err
+}
+
+// generateVolumePlacementHint shuffles a list of compatible nodes for a given
+// driver name and returns a random node ID as a hint.
+func generateVolumePlacementHint(
+	kubeClient kubernetes.Interface,
+	driverName string,
+	csiNodeLister storagelistersv1beta1.CSINodeLister) (string, error) {
+	// availableNodes is a list of available node IDs for a specific driver
+	// name. The IDs are SP's internal node ID, node k8s node names.
+	availableNodes := []string{}
+
+	csiNodes, err := csiNodeLister.List(labels.Everything())
+	if err != nil {
+		return "", fmt.Errorf("error listing CSINodes: %v", err)
+	}
+
+	// Populate the available nodes based on with the given driver name.
+	for _, csiNode := range csiNodes {
+		// Check if this node has the target driver.
+		for _, driver := range csiNode.Spec.Drivers {
+			if driverName == driver.Name {
+				availableNodes = append(availableNodes, driver.NodeID)
+			}
+		}
+	}
+
+	// Shuffle the list of available nodes.
+	rand.Shuffle(len(availableNodes), func(i, j int) {
+		availableNodes[i], availableNodes[j] = availableNodes[j], availableNodes[i]
+	})
+
+	// TODO: Maybe perform some better shuffling or sorting of the nodes to
+	// spread the volumes better across the nodes.
+
+	return availableNodes[0], nil
 }

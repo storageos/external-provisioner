@@ -199,10 +199,10 @@ func main() {
 
 	var csiNodeLister storagelistersv1beta1.CSINodeLister
 	var nodeLister v1.NodeLister
-	if ctrl.SupportsTopology(pluginCapabilities) {
-		csiNodeLister = factory.Storage().V1beta1().CSINodes().Lister()
-		nodeLister = factory.Core().V1().Nodes().Lister()
-	}
+	// if ctrl.SupportsTopology(pluginCapabilities) {
+	csiNodeLister = factory.Storage().V1beta1().CSINodes().Lister()
+	nodeLister = factory.Core().V1().Nodes().Lister()
+	// }
 
 	// Create the provisioner: it implements the Provisioner interface expected by
 	// the controller
