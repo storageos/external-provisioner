@@ -934,6 +934,69 @@ func TestProvision(t *testing.T) {
 			},
 			expectState: controller.ProvisioningFinished,
 		},
+		"storageos provision with pvc metadata": {
+			volOpts: controller.ProvisionOptions{
+				StorageClass: &storagev1.StorageClass{
+					ReclaimPolicy: &deletePolicy,
+					Parameters: map[string]string{
+						"fstype":                 "ext3",
+						"storageos.com/sc-label": "storageos",
+					},
+				},
+				PVName: "test-name",
+				PVC: &v1.PersistentVolumeClaim{
+					ObjectMeta: metav1.ObjectMeta{
+						UID:         "testid",
+						Name:        "pvc-name",
+						Namespace:   "pvc-ns",
+						Annotations: driverNameAnnotation,
+						Labels: map[string]string{
+							"storageos.com/replicas": "2",
+							"app":                    "myapp",
+						},
+					},
+					Spec: v1.PersistentVolumeClaimSpec{
+						Selector: nil,
+						Resources: v1.ResourceRequirements{
+							Requests: v1.ResourceList{
+								v1.ResourceName(v1.ResourceStorage): resource.MustParse(strconv.FormatInt(requestedBytes, 10)),
+							},
+						},
+					},
+				},
+			},
+			withExtraMetadata: true,
+			expectedPVSpec: &pvSpec{
+				Name:          "test-testi",
+				ReclaimPolicy: v1.PersistentVolumeReclaimDelete,
+				Capacity: v1.ResourceList{
+					v1.ResourceName(v1.ResourceStorage): bytesToGiQuantity(requestedBytes),
+				},
+				CSIPVS: &v1.CSIPersistentVolumeSource{
+					Driver:       "test-driver",
+					VolumeHandle: "test-volume-id",
+					FSType:       "ext3",
+					VolumeAttributes: map[string]string{
+						"storage.kubernetes.io/csiProvisionerIdentity": "test-provisioner",
+					},
+				},
+			},
+			expectCreateVolDo: func(ctx context.Context, req *csi.CreateVolumeRequest) {
+				expectedParams := map[string]string{
+					pvcNameKey:               "pvc-name",
+					pvcNamespaceKey:          "pvc-ns",
+					pvNameKey:                "test-testi",
+					"fstype":                 "ext3",
+					"storageos.com/sc-label": "storageos",
+					"storageos.com/replicas": "2",
+					"app":                    "myapp",
+				}
+				if fmt.Sprintf("%v", req.Parameters) != fmt.Sprintf("%v", expectedParams) { // only pvc name/namespace left
+					t.Errorf("Unexpected parameters: %v", req.Parameters)
+				}
+			},
+			expectState: controller.ProvisioningFinished,
+		},
 		"multiple fsType provision": {
 			volOpts: controller.ProvisionOptions{
 				StorageClass: &storagev1.StorageClass{
